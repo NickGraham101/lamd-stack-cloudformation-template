@@ -1,0 +1,1237 @@
+{
+	"AWSTemplateFormatVersion" : "2010-09-09",
+
+	"Description" : "General purpose LAMD stack EC2 Instance - hosts Dotnet Core web application & database layers, preconfigured with LetsEncrypt SSL cert &  Visual Studio Team Services agent",
+
+	"Parameters" : {
+		"DeploymentType" : {
+			"Default" : "Test",
+			"Type" : "String",
+			"AllowedValues" : ["Production", "Test"]
+		},
+		"ServerName"  : {
+            "Description" : "Server name and name tag",
+            "Type"        : "String",
+            "MinLength"   : "1",
+            "MaxLength"   : "10",
+            "AllowedPattern" : "[a-zA-Z\\-\\_][a-zA-Z0-9\\-\\_]*",
+            "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters, dashes and underscores."
+        },
+		"KeyName" : {
+			"Description" : "Key pair used to connect to EC2 instance",
+			"Type" : "AWS::EC2::KeyPair::KeyName"
+		},
+		"SecurityGroups" : {
+			"Description" : "Security group to add instance to",
+			"Type" : "List<AWS::EC2::SecurityGroup::GroupName>"
+		},
+        "Hostname"  : {
+            "Description" : "Host name",
+            "Type"        : "String",
+            "MinLength"   : "1",
+            "MaxLength"   : "64",
+            "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+            "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+        },
+		"HostedZoneId" : {
+			"Description" : "An A record for the host name will be created here",
+			"Type" : "AWS::Route53::HostedZone::Id"		
+		},
+		"DomainName": {
+			"Type" : "String",
+			"Description" : "The DNS name of an Amazon Route 53 hosted zone e.g. server.com, omit the final dot (.)",
+			"AllowedPattern" : "(?!-)[a-zA-Z0-9-.]{1,63}(?<!-)[.]*$",
+			"ConstraintDescription" : "must be a valid DNS zone name."
+		},
+		"DBName"  : {
+            "Description" : "MariaDb database name",
+            "Type"        : "String",
+            "MinLength"   : "1",
+            "MaxLength"   : "64",
+            "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*_",
+            "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+        },
+        "DBUser"  : {
+			"Description" : "Username for MariaDb database access",
+            "Type"        : "String",
+            "MinLength"   : "1",
+            "MaxLength"   : "16",
+            "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+            "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+        },
+        "DBPassword" : {
+            "NoEcho" : "true",
+            "Description" : "Password for MariaDb database access",
+            "Type"        : "String",
+            "MinLength"   : "1",
+            "MaxLength"   : "41",
+            "AllowedPattern" : "[a-zA-Z0-9!$#]*",
+            "ConstraintDescription" : "must contain only alphanumeric characters."
+        },
+        "DBRootPassword" : {
+            "NoEcho" : "true",
+            "Description" : "Root password for MariaDb",
+            "Type"        : "String",
+            "MinLength"   : "1",
+            "MaxLength"   : "41",
+            "AllowedPattern" : "[a-zA-Z0-9!$#?]*",
+            "ConstraintDescription" : "must contain only alphanumeric characters and symbols (!$#?)."
+        },
+		"DBBackupUserPassword" : {
+            "NoEcho" : "true",
+            "Description" : "Backup user (bkup) password for MySQL",
+            "Type"        : "String",
+            "MinLength"   : "1",
+            "MaxLength"   : "41",
+            "AllowedPattern" : "[a-zA-Z0-9!$#?]*",
+            "ConstraintDescription" : "must contain only alphanumeric characters and symbols (!$#?)."
+        },
+		"VstsAccountName" : {
+			"Description" : "Account name for Visual Studio Team Services",
+            "Type"        : "String",
+            "MinLength"   : "1",
+            "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9.]*",
+            "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+		},
+		"VstsPatToken" : {
+            "NoEcho" : "true",
+            "Description" : "PAT token for Visual Studio Team Services (VS Team Services - PAT - DeploymentToken from Keepass)",
+            "Type"        : "String",
+            "MinLength"   : "1"
+        },
+		"VstsAgentPool" : {
+			"Description" : "Agent Pool name for Visual Studio Team Services agent",
+            "Type"        : "String",
+            "MinLength"   : "1",
+            "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9.]*",
+            "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+		},
+		"DotNetApplicationName" : {
+			"Description" : "Name of the ASP DotNet Core dll file, do not include .dll",
+            "Type"        : "String",
+            "MinLength"   : "1",
+			"AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+            "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+        }
+	},
+
+	"Conditions" : {
+		"ProductionDeployment" : { "Fn::Equals" : [{ "Ref" : "DeploymentType" }, "Production" ]}
+	},
+
+	"Resources" : {
+		"InstanceGroup" : {
+			"Type" : "AWS::IAM::Group",
+			"Properties" : {
+				"GroupName": {
+					"Fn::Join" : [
+						"",
+						[
+							{ "Ref" : "AWS::StackName" },
+							"-CloudWatch-ServiceReporting"
+						]
+					]
+				},
+				"ManagedPolicyArns": [ "arn:aws:iam::aws:policy/CloudWatchFullAccess" ],
+				"Policies" : [ {
+					"PolicyName" : {
+						"Fn::Join" : [
+							"",
+							[
+								{ "Ref" : "AWS::StackName" },
+								"-EC2DescribeTags"
+							]
+						]
+					},
+					"PolicyDocument" : {
+						"Version" : "2012-10-17",
+						"Statement" : [{
+						    "Effect": "Allow",
+							"Action": [
+								"ec2:DescribeTags"
+							],
+							"Resource": [
+								"*"
+							]
+						}]
+					}
+				}
+				
+				]
+			}
+		},
+		"InstanceUser": {
+			"Type" : "AWS::IAM::User",
+			"Properties" : {
+				"Groups": [ 
+					{ "Ref": "InstanceGroup" }
+				],
+				"UserName": {
+					"Fn::Join" : [
+						"",
+						[
+							{ "Ref" : "AWS::StackName" },
+							"-CloudWatch-ServiceReporting"
+						]
+					]
+				}
+			}
+		},
+		"InstanceUserAccessKey" : {
+		   "Type" : "AWS::IAM::AccessKey",
+			"Properties" : {
+				"UserName" : { "Ref" : "InstanceUser" }
+			}
+		},
+		"InstanceRole":{
+			 "Type":"AWS::IAM::Role",
+			 "Properties":{
+				"AssumeRolePolicyDocument":{
+				   "Statement":[
+					  {
+						 "Effect":"Allow",
+						 "Principal":{
+							"Service":[
+							   "ec2.amazonaws.com"
+							]
+						 },
+						 "Action":[
+							"sts:AssumeRole"
+						 ]
+					  }
+				   ]
+				},
+				"Path":"/"
+			 }
+		  },
+		"RolePolicies":{
+			 "Type":"AWS::IAM::Policy",
+			 "Properties":{
+				"PolicyName":"S3Download",
+				"PolicyDocument":{
+				   "Statement":[
+					  {
+						 "Action":[
+							"s3:GetObject"
+						 ],
+						 "Effect":"Allow",
+						 "Resource":"arn:aws:s3:::gt-cloudformation-files/*"
+					  }
+				   ]
+				},
+				"Roles":[
+				   {
+					  "Ref":"InstanceRole"
+				   }
+				]
+			 }
+		  },
+		"InstanceProfile":{
+			 "Type":"AWS::IAM::InstanceProfile",
+			 "Properties":{
+				"Path":"/",
+				"Roles":[
+				   {
+					  "Ref":"InstanceRole"
+				   }
+				]
+			 }
+		  },
+		"Ec2Instance" : {
+			"Type": "AWS::EC2::Instance",
+			"Metadata" :{
+				"AWS::CloudFormation::Authentication": {
+					"S3AccessCreds": {
+						"type": "S3",
+						"roleName": { "Ref" : "InstanceRole"},
+						"buckets" : ["gt-cloudformation-files"]
+					}
+				},
+				"AWS::CloudFormation::Init" : {
+					"configSets": {
+						"default": [ 
+							"cfn_base",
+							"Install",
+							"InitialConfiguration",
+							"InstallSsl",
+							"ConfigureSslHost",
+							"ApacheConfig",
+							"MariaDbConfig",
+							"DotNetConfig",
+							"ConfigureCronAlerts",
+							"ConfigureBackups",
+							"ConfigureErrorReport",
+							"ConfigureMonitoring",
+							"CleanUp"  
+						]
+					},
+					"cfn_base": {
+						"files": {
+							"/etc/cfn/cfn-hup.conf": {
+								"content": {"Fn::Join":["\n", [
+									"[main]",
+									"stack={{stackid}}",
+									"region={{region}}",
+									"interval=5",
+									"",
+									""
+								]]},
+								"context": {
+									"stackid": {"Ref":"AWS::StackId"},
+									"region": {"Ref":"AWS::Region"}
+								}
+							},
+
+							"/etc/cfn/hooks.d/cfn-auto-reloader.conf": {
+								"content": {"Fn::Join":["\n", [
+									"[cfn-auto-reloader-hook]",
+									"triggers=post.update",
+									"path=Resources.Ec2Instance.Metadata.AWS::CloudFormation::Init",
+									"action=/opt/aws/bin/cfn-init -v --stack {{stackid}} --region {{region}} --resource Ec2Instance",
+									"runas=root",
+									""
+								]]},
+								"context": {
+									"stackid": {"Ref":"AWS::StackId"},
+									"region": {"Ref":"AWS::Region"}
+								}
+							}
+						},
+						"services": {
+							"sysvinit": {
+								"cfn-hup": { "enabled": "true", "ensureRunning" : "true" }
+						}
+					}
+					},
+					"Install" : {
+							"packages" : {
+								"yum" : {
+									"httpd" :[
+									],
+									"mariadb" : [
+									],
+									"mariadb-server" : [
+									],
+									"yum-utils" : [
+									],
+									"libcurl-devel" : [
+									],
+									"expat-devel" : [
+									],
+									"gettext-devel" : [
+									],
+									"openssl-devel" : [
+									],
+									"zlib-devel" : [
+									],
+									"gcc" : [
+									],
+									"perl-ExtUtils-MakeMaker" : [
+									]
+								}
+							},
+							"services" : {
+								"sysvinit": {
+									"httpd": { "enabled": "true", "ensureRunning" : "true" },
+									"mariadb": { "enabled": "true", "ensureRunning" : "true" }
+							}
+						}
+					},
+					"InitialConfiguration" : {
+						"files" : {
+							"/etc/httpd/conf.d/server.conf" : {
+								"content" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"<Location \"/Admin/\">",
+											"   Order deny,allow",
+											"   Deny from all",
+											"   Allow from localhost",
+											"</Location>",
+											"<Location “/server-status”>",
+											"   SetHandler server-status",
+											"   Order deny,allow",
+											"   Deny from all",
+											"   Allow from localhost",
+											"</Location>",
+											"<Location “/server-info”>",
+											"   SetHandler server-info",
+											"   Order deny,allow",
+											"   Deny from all",
+											"   Allow from localhost",
+											"</Location>",
+											"",
+											"Options -Indexes -FollowSymLinks"
+										]
+									]
+								},
+								"mode" : "000600",
+								"owner": "root",
+								"group": "root"
+							},
+							"/etc/httpd/conf.d/application_hosts.conf" : {
+								"content" : {
+									"Fn::Join" : [
+										"",
+										[
+											"<VirtualHost *:80>\n",
+											"   ProxyPreserveHost On\n",
+        									"   ProxyPass / http://127.0.0.1:5000/\n",
+       										"   ProxyPassReverse / http://127.0.0.1:5000/\n",
+											"   ServerName ",
+											{
+												"Ref" : "Hostname"
+											}, ".",
+											{
+												"Ref" : "DomainName"
+											},
+											"\n",
+											"   CustomLog /var/log/httpd/access_log_",
+											{
+												"Ref" : "Hostname"
+											},
+											" combined\n",
+											"</VirtualHost>"
+										]
+									]
+								},
+								"mode" : "000600",
+								"owner": "root",
+								"group": "root"
+							}
+						},
+						"commands" : {
+							"01_create_backup_folder" : {
+								"command" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"sudo mkdir /home/centos/bkup",
+											"chown -R root /home/centos/bkup",
+											"groupadd backup-rdr",
+											"usermod -G backup-rdr -a centos",
+											"chgrp -R backup-rdr /home/centos/bkup",
+											"chmod -R 740 /home/centos/bkup",
+											"chmod 750 /home/centos/bkup"
+										]
+									]
+								}
+							},
+							"02_create_scripts_folder" : {
+								"command" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"sudo mkdir /home/centos/scripts",
+											"chmod -R 770 /home/centos/scripts"
+										]
+									]
+								}
+							}
+						}
+					},
+					"InstallSsl" : {
+						"packages" : {
+							"yum" : {
+								"python2-certbot-apache" : [
+								],
+								"mod_ssl" : [
+								]
+							}
+						},
+						"files" : {
+							"/etc/httpd/conf.d/application_hosts.conf" : {
+								"content" : {
+									"Fn::Join" : [
+										"",
+										[
+											"<VirtualHost *:80>\n",
+											"   ProxyPreserveHost On\n",
+        									"   ProxyPass / http://127.0.0.1:5000/\n",
+       										"   ProxyPassReverse / http://127.0.0.1:5000/\n",
+											"   ServerName ",
+											{
+												"Ref" : "Hostname"
+											}, ".",
+											{
+												"Ref" : "DomainName"
+											},
+											"\n",
+											"   CustomLog /var/log/httpd/access_log_",
+																						{
+												"Ref" : "Hostname"
+											},
+											" combined\n",
+											"   ##redirect to https\n",
+											"   RewriteEngine On\n",
+											"   RewriteCond %{HTTPS} !=on\n",
+											"   RewriteRule ^/?(.*) https://%{SERVER_NAME}/$1 [R,L]\n",
+											"</VirtualHost>"
+										]
+									]
+								},
+								"mode" : "000600",
+								"owner": "root",
+								"group": "root"
+							}
+						},
+						"commands" : {
+							"01_restart_apache" : {
+								"command" : "sudo service httpd restart"
+							},
+							"02_install_ssl" : {
+								"command" : {
+									"Fn::Join" : [
+										"",
+										[
+											"sudo certbot --apache certonly -d ",
+											{
+												"Ref" : "Hostname"
+											}, ".",
+											{
+												"Ref" : "DomainName"
+											},
+											" --agree-tos --email admin@",
+											{
+												"Ref" : "DomainName"
+											},
+											" -n ",
+											{
+												"Fn::If" : [ "ProductionDeployment", "", "--staging"]
+											}
+										]
+									]
+								}
+							}
+						}
+					},
+					"ConfigureSslHost" : {
+						"files" : {
+							"/etc/httpd/conf.d/application_secure_hosts.conf" : {
+								"content" : {
+									"Fn::Join" : [
+										"",
+										[
+											"<VirtualHost *:443>\n",
+											"   SSLEngine on\n",
+											"   SSLProtocol all -SSLv3 -SSLv2\n",
+											"   ProxyPreserveHost On\n",
+											"   ProxyPass / http://127.0.0.1:5000/\n",
+											"   ProxyPassReverse / http://127.0.0.1:5000/\n",
+											"   SSLCertificateFile /etc/letsencrypt/live/",
+											{
+												"Ref" : "Hostname"
+											}, ".",
+											{
+												"Ref" : "DomainName"
+											},
+											"/cert.pem\n",
+											"   SSLCertificateKeyFile /etc/letsencrypt/live/",
+											{
+												"Ref" : "Hostname"
+											}, ".",
+											{
+												"Ref" : "DomainName"
+											},
+											"/privkey.pem\n",
+											"   ServerName ",
+											{
+												"Ref" : "Hostname"
+											}, ".",
+											{
+												"Ref" : "DomainName"
+											}," \n",
+											"   CustomLog /var/log/httpd/access_log_",
+											{
+												"Ref" : "Hostname"
+											},
+											" combined\n",
+											"</VirtualHost>\n"
+										]
+									]
+								},
+								"mode" : "000600",
+								"owner": "root",
+								"group": "root"
+							}
+						}
+					},
+					"ApacheConfig" : {
+						"commands" : {
+							"01_configure_host_dir" : {
+								"command" : {
+									"Fn::Join" : [
+										"",
+										[
+											"mkdir /var/www/html/",
+											{
+												"Ref" : "Hostname"
+											}, "\n",
+											"chown -R centos /var/www/html/",
+											{
+												"Ref" : "Hostname"
+											}, "\n",
+											"chgrp -R apache /var/www/html/",
+											{
+												"Ref" : "Hostname"
+											}, "\n",
+											"chmod -R 750 /var/www/html/",
+											{
+												"Ref" : "Hostname"
+											}, "\n",
+											"chmod g+s /var/www/html/",
+											{
+												"Ref" : "Hostname"
+											}, "\n",
+											"sudo service httpd restart"
+										]
+									]
+								}
+							}
+						}					
+					},
+					"MariaDbConfig" : {
+						"files" : {
+							"/tmp/secure.mysql" : {
+								"content" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"DELETE FROM mysql.user WHERE User='';",
+											"DELETE FROM mysql.db WHERE Db='test' OR Db='test_%';",
+											"DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');:q",
+											"FLUSH PRIVILEGES;"
+										]
+									]
+								}
+							},
+							"/tmp/setup.mysql" : {
+								"content" : {
+									"Fn::Join" : [
+										"",
+										[
+											"CREATE DATABASE ",
+											{
+												"Ref" : "DBName"
+											},
+											";\n",
+											"CREATE USER '",
+											{ 
+												"Ref" : "DBUser" 
+											},
+											"'@'127.0.0.1' IDENTIFIED BY '",
+											{ 
+												"Ref" : "DBPassword"
+											},
+											"';\n",
+											"GRANT SELECT, UPDATE, INSERT, DELETE, EXECUTE ON ",
+											{
+												"Ref" : "DBName"
+											},
+											".* TO '",
+											{
+												"Ref" : "DBUser"
+											},
+											"'@'127.0.0.1';"
+										]
+									]
+								}
+							}
+						},
+						"commands" : {
+							"01_secure_mariadb" : {
+                                "command" : {
+                                    "Fn::Join" : [
+                                        "",
+                                        [
+                                            "mysqladmin -u root password '",
+                                            {
+                                                "Ref" : "DBRootPassword"
+                                            },
+                                            "';\n",
+											"mysql -u root --password='",
+                                            {
+                                                "Ref" : "DBRootPassword"
+                                            },
+                                            "' < /tmp/secure.mysql\n",
+											"setsebool -P httpd_can_network_connect_db on"
+                                        ]
+                                    ]
+                                },
+                                "test"    : {
+                                    "Fn::Join" : [
+                                        "",
+                                        [
+                                            "$(mysql ",
+                                            {
+                                                "Ref" : "DBName"
+                                            },
+                                            " -u root --password='",
+                                            {
+                                                "Ref" : "DBRootPassword"
+                                            },
+                                            "' >/dev/null 2>&1 </dev/null); (( $? != 0 ))"
+                                        ]
+                                    ]
+                                }
+                            },
+							"02_set_mysql_webuser" : {
+								"command" : {
+									"Fn::Join" : [
+										"",
+										[
+											"mysql -u root --password='",
+											{
+												"Ref" : "DBRootPassword"
+											},
+											"' < /tmp/setup.mysql"
+										]
+									]
+								}
+							}
+						}
+					},
+					"DotNetConfig" : {
+						"files" : {
+							"/etc/systemd/system/kestrel-app.service" : {
+								"content" : {
+									"Fn::Join" : [
+										"",
+										[
+											"[Unit]\n",
+											"   Description=",
+											{
+												"Ref" : "DotNetApplicationName"
+											},
+											"application\n",
+											"\n",
+											"   [Service]\n",
+											"   WorkingDirectory=/var/www/html/",
+											{
+												"Ref" : "Hostname"
+											}, "\n",
+											"   ExecStart=/usr/bin/dotnet /var/www/html/",
+											{
+												"Ref" : "Hostname"
+											},
+											"/"
+											,
+											{
+												"Ref" : "DotNetApplicationName"
+											}, ".dll\n",
+											"   Restart=always\n",
+											"   RestartSec=10                                         # Restart service after 10 seconds if dotnet service crashes\n",
+											"   SyslogIdentifier=",
+											{
+												"Ref" : "DotNetApplicationName"
+											}, "\n",
+											"   User=apache\n",
+											"   Environment=ASPNETCORE_ENVIRONMENT=Production\n",
+											"\n",
+											"[Install]\n",
+											"WantedBy=multi-user.target\n"
+										]
+									]
+								}
+							}
+						},
+						"commands" : {
+							"01_install_dotnet" : {
+								"command" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc",
+											"sudo sh -c 'echo -e \"[packages-microsoft-com-prod]\nname=packages-microsoft-com-prod \nbaseurl=https://packages.microsoft.com/yumrepos/microsoft-rhel7.3-prod\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc\" > /etc/yum.repos.d/dotnetdev.repo'",
+											"yum makecache",
+											"sudo yum update -y",
+											"sudo yum install libunwind libicu -y",
+											"sudo yum install dotnet-sdk-2.0.0 -y"
+										]
+									]
+								}
+							},
+							"02_configure_dotnet" : {
+								"command" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"sudo setsebool -P httpd_can_network_connect on",
+											"sudo systemctl enable kestrel-app.service",
+											"sudo systemctl start kestrel-app.service"
+										]
+									]
+								}
+							},
+							"03_update_git" : {
+								"command" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"cd /usr/src",
+											"sudo wget https://www.kernel.org/pub/software/scm/git/git-2.9.2.tar.gz",
+											"sudo tar xzf git-2.9.2.tar.gz",
+											"sudo yum remove git",
+											"cd git-2.9.2",
+											"sudo make prefix=/usr/local/git all",
+											"sudo make prefix=/usr/local/git install",
+											"echo \"export PATH=$PATH:/usr/local/git/bin\" >> /etc/profile.d/git.sh"
+										]
+									]
+								}
+							},
+							"04_install_vsts_agent" : {
+								"command" : {
+									"Fn::Join" : [
+										"",
+										[
+											"cd /home/centos\n",
+											"curl -L -O https://github.com/Microsoft/vsts-agent/releases/download/v2.119.1/vsts-agent-rhel.7.2-x64-2.119.1.tar.gz\n",
+											"mkdir myagent && cd myagent\n",
+											"tar zxvf /home/centos/vsts-agent-rhel.7.2-x64-2.119.1.tar.gz\n",
+											"cd /home/centos/myagent\n",
+											"sudo -u centos ./config.sh --unattended --url https://",
+											{
+												"Ref" : "VstsAccountName"
+											},
+											".visualstudio.com --replace --auth PAT --token ",
+											{
+												"Ref" : "VstsPatToken"
+											},
+											" --pool ",
+											{
+												"Ref" : "VstsAgentPool"
+											},
+											" --agent ",
+											{
+												"Ref" : "ServerName"
+											},
+											"\n",
+											"./svc.sh install\n",
+											"./svc.sh start\n"
+
+										]
+									]
+								}
+							}
+						}
+					},
+					"ConfigureCronAlerts" : {
+							"packages" : {
+								"yum" : {
+									"mailx" :[
+									]
+								}
+							},
+							"files" : {
+								"/usr/local/sbin/mailx-t" : {
+									"content" : {
+										"Fn::Join" : [
+											"\n",
+											[
+												"#!/bin/sh",
+												"exec mailx -t"
+											]
+										]
+									},
+									"mode" : "000770",
+									"group": "centos"
+								}
+							},
+							"commands" : {
+								"01_configure_mailx_wrapper" : {
+									"command" : "sudo sed -i '/^CRONDARGS=/ s/$/\"-m \\/usr\\/local\\/sbin\\/mailx-t\"/' /etc/sysconfig/crond"
+								},
+								"02_configure_mailto" : {
+									"command" : {
+										"Fn::Join" : [
+											"",
+											[
+												"sudo sed -i 's/MAILTO.*/MAILTO=admin@",
+											{
+												"Ref" : "DomainName"
+											},
+											"/' /etc/crontab"
+											]
+										]
+									}
+								}
+							}
+					},
+					"ConfigureBackups" : {
+						"files" : {
+							"/tmp/create-backup-user.mysql" : {
+								"content" : {
+									"Fn::Join" : [
+										"",
+										[
+											"CREATE USER 'bkup'@'127.0.0.1' IDENTIFIED BY '",
+											{
+												"Ref" : "DBBackupUserPassword"
+											},
+											"';\n",
+											"GRANT SELECT ON *.* TO 'bkup'@'127.0.0.1';\n",
+											"GRANT SHOW VIEW ON *.* TO 'bkup'@'127.0.0.1';\n",
+											"GRANT LOCK TABLES ON *.* TO 'bkup'@'127.0.0.1';\n",
+											"GRANT TRIGGER ON *.* TO 'bkup'@'127.0.0.1';\n",
+											"FLUSH PRIVILEGES;"
+										]
+									]									
+								}
+							},
+							"/home/centos/scripts/backup.sh" : {
+								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/shellscripts/backup.sh",
+								"context" : {
+									"DBBackupUserPassword" : {"Ref" : "DBBackupUserPassword"}
+								},
+								"mode" : "000755",
+								"authentication" : "S3AccessCreds"
+							},
+							"/home/centos/scripts/backup-ssl.sh" : {
+								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/shellscripts/backup-ssl.sh",
+								"mode" : "000755",
+								"authentication" : "S3AccessCreds"							
+							}
+						},
+						"commands" : {
+							"01_create_backup_user" : {
+								"command" : {
+									"Fn::Join" : [
+											"",
+											[
+												"mysql -u root --password='",
+												{
+													"Ref" : "DBRootPassword"
+												},
+												"' < /tmp/create-backup-user.mysql"
+											]
+									]
+								}
+							},
+							"02_configure_cron_jobs" : {
+								"command" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"echo \"30 7 * * 1 centos /home/centos/scripts/backup.sh\" | sudo tee -a /etc/crontab",
+											"echo \"30 18 * * 1 centos /home/centos/scripts/backup-ssl.sh\" | sudo tee -a /etc/crontab"
+										]
+									]
+								}
+							},
+							"03_restart_cron" : {
+								"command" : "sudo service crond restart"
+							}
+						}
+					},
+					"ConfigureErrorReport" : {
+						"files" : {
+							"/home/centos/scripts/error_report.sh" : {
+								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/shellscripts/error_report.sh",
+								"mode" : "000755",
+								"authentication" : "S3AccessCreds"
+							}
+						},
+						"commands" : {
+							"01_configure_cron_job" : {
+								"command" : "echo \"0 0 1 * * centos /home/centos/scripts/error_report.sh\" | sudo tee -a /etc/crontab"
+							},
+							"02_restart_cron" : {
+								"command" : "sudo service crond restart"
+							}
+						}
+					},
+					"ConfigureMonitoring" : {
+						"packages" : {
+							"yum" : {
+								"zip" : [],
+								"unzip" : []
+							}
+						},
+						"files" : {
+							"/home/centos/.aws/credentials" : {
+								"content" : {
+									"Fn::Join" : [
+										"",
+										[
+											"[default]\n",
+											"aws_access_key_id = ",
+											{ "Ref" : "InstanceUserAccessKey"},
+											"\n",
+											"aws_secret_access_key = ",
+											{ 
+												"Fn::GetAtt" : [
+													"InstanceUserAccessKey",
+													"SecretAccessKey"
+												]
+											}
+										]
+									]
+								},
+								"mode" : "000600",
+								"owner": "centos",
+								"group": "centos"
+							},
+							"/home/centos/.aws/config" : {
+								"content" : {
+									"Fn::Join" : [
+										"",
+										[
+											"[default]\n",
+											"region=",
+											{ "Ref" : "AWS::Region"},
+											"\n",
+											"output=json"
+										]
+									]
+								},
+								"mode" : "000600",
+								"owner": "centos",
+								"group": "centos"
+							},
+							"/home/centos/scripts/service-check.sh" : {
+								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/shellscripts/service-check.sh",
+								"mode" : "000755",
+								"authentication" : "S3AccessCreds"
+							},
+							"/home/centos/.bash_profile" : {
+								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/configfiles/.bash_profile",
+								"mode" : "000644",
+								"owner": "centos",
+								"group": "centos",
+								"authentication" : "S3AccessCreds"
+							}
+						},
+						"commands" : {
+							"01_install_pip" : {
+								"command" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"curl -o /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py",
+											"python /tmp/get-pip.py",
+											"source ~/.bash_profile"
+										]
+									]
+								}
+							},
+							"02_install_aws_cli" : {
+								"command" : "pip install awscli --upgrade"
+							},
+							"03_configure_cron_jobs" : {
+								"command" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"echo \"*/5 * * * * centos /home/centos/scripts/service-check.sh kestrel-app.service\" | sudo tee -a /etc/crontab",
+											"echo \"*/5 * * * * centos /home/centos/scripts/service-check.sh httpd.service\" | sudo tee -a /etc/crontab",
+											"echo \"*/5 * * * * centos /home/centos/scripts/service-check.sh mariadb.service\" | sudo tee -a /etc/crontab"
+										]
+									]
+								}
+							},
+							"04_install_additional_monitoring" : {
+								"command" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											"sudo yum install perl-Switch perl-DateTime perl-Sys-Syslog perl-LWP-Protocol-https perl-Digest-SHA --enablerepo=\"rhui-REGION-rhel-server-optional\" -y",
+											"curl http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip -O",
+											"unzip CloudWatchMonitoringScripts-1.2.1.zip",
+											"rm CloudWatchMonitoringScripts-1.2.1.zip",
+											"cd aws-scripts-mon",
+											"cp awscreds.template awscreds.conf",
+											"chmod 600 awscreds.conf"
+										]
+									]
+								}
+							},
+							"05_configure_additional_monitoring" : {
+								"command" : {
+									"Fn::Join" : [
+										"",
+										[
+											"sudo sed -i '/^AWSAccessKeyId=s/",
+											{ "Ref" : "InstanceUserAccessKey" },
+											"/' ~/aws-scripts-mon/awscreds.conf\n",
+											"sudo sed -i '/^AWSSecretKey=s/",
+											{ 
+												"Fn::GetAtt" : [
+													"InstanceUserAccessKey",
+													"SecretAccessKey"
+												]
+											},
+											"/' ~/aws-scripts-mon/awscreds.conf\n",
+											"echo \"*/5 * * * * ~/aws-scripts-mon/mon-put-instance-data.pl --mem-util --mem-used-incl-cache-buff --mem-used --mem-avail --disk-space-util --disk-path=/ --from-cron\" | sudo tee -a /etc/crontab"
+										]
+									]
+								}
+							},
+							"06_restart_cron" : {
+								"command" : "sudo service crond restart"
+							}
+						}
+					},
+					"CleanUp" : {
+						"commands" : {
+							"01_remove_tmp_files" : {
+								"command" : {
+									"Fn::Join" : [
+										"\n",
+										[
+											 "sudo rm -f /tmp/*.mysql",
+											 "sudo rm -f /tmp/*.py"
+										]
+									]
+								}
+							}
+						}
+					}
+				}
+			},
+			"Properties" : { 
+				"ImageId": "ami-0d063c6b",
+				"InstanceType" : "t2.micro",
+				"SecurityGroups" : {
+						"Ref" : "SecurityGroups"
+				},
+				"KeyName" : {
+					"Ref" : "KeyName"
+				},
+				"IamInstanceProfile" : {
+					"Ref": "InstanceProfile"
+				},
+				"BlockDeviceMappings" : [
+					{
+						"DeviceName" : "/dev/sda1",
+						"Ebs" : {
+							"DeleteOnTermination" : "True"
+						}
+					}
+				],
+				"Tags" : [
+					{
+						"Key" : "Name",
+						"Value" : {
+							"Ref" : "ServerName"
+						}
+					}
+				],
+				"UserData": {"Fn::Base64": {"Fn::Join":["", [
+					"#!/bin/bash\n",
+					"yum install -y epel-release\n",
+					"yum install -y awscli\n",
+					"/usr/bin/easy_install --script-dir /opt/aws/bin https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz\n",
+					"cp -v /usr/lib/python2*/site-packages/aws_cfn_bootstrap*/init/redhat/cfn-hup /etc/init.d \n",
+					"chmod +x /etc/init.d/cfn-hup \n",
+					"/opt/aws/bin/cfn-init --stack ", {"Ref":"AWS::StackId"}, " --resource Ec2Instance --region ", {"Ref":"AWS::Region"}, "\n",
+					"/opt/aws/bin/cfn-signal -e 0 --stack ", {"Ref":"AWS::StackName"}, " --resource Ec2Instance ",
+					"    --region ", {"Ref":"AWS::Region"}, "\n"
+				]]}}
+			}
+		},
+		"GtGenSiteDns" : {
+			"Type" : "AWS::Route53::RecordSet",
+			"Properties" : 
+			{
+			"HostedZoneId" :{
+				"Ref" : "HostedZoneId"
+			},
+			"Name" : { "Fn::Join" : [
+							"",
+							[
+								{
+									"Ref" : "Hostname"
+								}, ".",
+								{
+									"Ref" : "DomainName"
+								}
+							]
+						]
+			},
+			"Type" : "A",
+			"TTL" : "600",
+			"ResourceRecords" : [ 
+				{"Fn::GetAtt" : ["Ec2Instance","PublicIp"]}
+			]
+			},
+			"DependsOn" : "Ec2Instance"
+		},
+		"CloudWatchNotification" : {
+			"Type" : "AWS::SNS::Topic",
+			"Properties" : {
+				"DisplayName" : {
+					"Fn::Join" : [
+						"",
+						[
+							{ "Ref" : "AWS::StackName" },
+							"-ServiceAlarms"
+						]
+					]
+				},
+				"Subscription" : [{
+					"Endpoint" : { 
+						"Fn::Join" : [
+							"",
+							[
+								"admin@",
+								{
+									"Ref" : "DomainName"
+								}
+							]
+						]
+					},
+					"Protocol" : "email"					
+				}]
+			}
+		},
+		"ServiceAlarms" : {
+			"Type" : "AWS::CloudWatch::Alarm",
+			"Properties" : {
+			  "ActionsEnabled" : "True",
+			  "AlarmActions" : [ { "Ref" : "CloudWatchNotification" } ],
+			  "AlarmDescription" : {
+				"Fn::Join" : [
+					"",
+					[
+						"Monitors running status of mariadb on ",
+						{ "Ref" : "AWS::StackName" }
+					]
+				]
+			  },
+			  "AlarmName" : "Mariadb-Service-Alarm",
+			  "ComparisonOperator" : "LessThanThreshold",
+			  "EvaluationPeriods" : 1,
+			  "InsufficientDataActions" : [ { "Ref" : "CloudWatchNotification" } ],
+			  "MetricName" : "mariadb",
+			  "Namespace" : "GandTServices",
+			  "Period" : 300,
+			  "Statistic" : "Average",
+			  "Threshold" : "1",
+			  "TreatMissingData" : "breaching"				
+			}
+		}
+	},
+
+	"Outputs" : {
+		"WebsiteIpAddr" : {
+			"Description" : "Website IP Address",
+			"Value" : {
+				"Fn::GetAtt" : [
+					"Ec2Instance",
+					"PublicIp"
+				]
+			}
+		},
+		"ServerDns" : {
+			"Description" : "Server DNS",
+			"Value" : {
+				"Fn::GetAtt" : [
+					"Ec2Instance",
+					"PublicDnsName"
+				]
+			}
+		}
+	}
+}
