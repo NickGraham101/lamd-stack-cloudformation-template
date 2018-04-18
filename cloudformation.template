@@ -48,7 +48,7 @@
             "Type"        : "String",
             "MinLength"   : "1",
             "MaxLength"   : "64",
-            "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*_",
+            "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
             "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
         },
         "DBUser"  : {
@@ -424,7 +424,8 @@
 										"\n",
 										[
 											"sudo mkdir /home/centos/scripts",
-											"chmod -R 770 /home/centos/scripts"
+											"chmod -R 750 /home/centos/scripts",
+											"chgrp centos /home/centos/scripts"
 										]
 									]
 								}
@@ -600,7 +601,7 @@
 										[
 											"DELETE FROM mysql.user WHERE User='';",
 											"DELETE FROM mysql.db WHERE Db='test' OR Db='test_%';",
-											"DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');:q",
+											"DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');",
 											"FLUSH PRIVILEGES;"
 										]
 									]
@@ -620,12 +621,12 @@
 											{ 
 												"Ref" : "DBUser" 
 											},
-											"'@'127.0.0.1' IDENTIFIED BY '",
+											"'@'localhost' IDENTIFIED BY '",
 											{ 
 												"Ref" : "DBPassword"
 											},
 											"';\n",
-											"GRANT SELECT, UPDATE, INSERT, DELETE, EXECUTE ON ",
+											"GRANT SELECT, INSERT, UPDATE, LOCK TABLES, EXECUTE ON ",
 											{
 												"Ref" : "DBName"
 											},
@@ -633,7 +634,7 @@
 											{
 												"Ref" : "DBUser"
 											},
-											"'@'127.0.0.1';"
+											"'@'localhost';"
 										]
 									]
 								}
@@ -866,32 +867,32 @@
 									"Fn::Join" : [
 										"",
 										[
-											"CREATE USER 'bkup'@'127.0.0.1' IDENTIFIED BY '",
+											"CREATE USER 'bkup'@'localhost' IDENTIFIED BY '",
 											{
 												"Ref" : "DBBackupUserPassword"
 											},
 											"';\n",
-											"GRANT SELECT ON *.* TO 'bkup'@'127.0.0.1';\n",
-											"GRANT SHOW VIEW ON *.* TO 'bkup'@'127.0.0.1';\n",
-											"GRANT LOCK TABLES ON *.* TO 'bkup'@'127.0.0.1';\n",
-											"GRANT TRIGGER ON *.* TO 'bkup'@'127.0.0.1';\n",
+											"GRANT SELECT ON *.* TO 'bkup'@'localhost';\n",
+											"GRANT SHOW VIEW ON *.* TO 'bkup'@'localhost';\n",
+											"GRANT LOCK TABLES ON *.* TO 'bkup'@'localhost';\n",
+											"GRANT TRIGGER ON *.* TO 'bkup'@'localhost';\n",
 											"FLUSH PRIVILEGES;"
 										]
 									]									
 								}
 							},
 							"/home/centos/scripts/backup.sh" : {
-								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/shellscripts/backup.sh",
+								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/raw/master/shellscripts/backup.sh",
 								"context" : {
 									"DBBackupUserPassword" : {"Ref" : "DBBackupUserPassword"}
 								},
-								"mode" : "000755",
-								"authentication" : "S3AccessCreds"
+								"mode" : "000750",
+								"owner": "root",
+								"group": "centos"
 							},
 							"/home/centos/scripts/backup-ssl.sh" : {
-								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/shellscripts/backup-ssl.sh",
-								"mode" : "000755",
-								"authentication" : "S3AccessCreds"							
+								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/raw/master/shellscripts/backup-ssl.sh",
+								"mode" : "000755"						
 							}
 						},
 						"commands" : {
@@ -914,8 +915,8 @@
 									"Fn::Join" : [
 										"\n",
 										[
-											"echo \"30 7 * * 1 centos /home/centos/scripts/backup.sh\" | sudo tee -a /etc/crontab",
-											"echo \"30 18 * * 1 centos /home/centos/scripts/backup-ssl.sh\" | sudo tee -a /etc/crontab"
+											"echo \"25 18 * * 1 root /home/centos/scripts/backup.sh\" | sudo tee -a /etc/crontab",
+											"echo \"30 18 * * 1 root /home/centos/scripts/backup-ssl.sh\" | sudo tee -a /etc/crontab"
 										]
 									]
 								}
@@ -928,9 +929,8 @@
 					"ConfigureErrorReport" : {
 						"files" : {
 							"/home/centos/scripts/error_report.sh" : {
-								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/shellscripts/error_report.sh",
-								"mode" : "000755",
-								"authentication" : "S3AccessCreds"
+								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/raw/master/shellscripts/error_report.sh",
+								"mode" : "000755"
 							}
 						},
 						"commands" : {
@@ -946,7 +946,12 @@
 						"packages" : {
 							"yum" : {
 								"zip" : [],
-								"unzip" : []
+								"unzip" : [],
+								"perl-Switch" : [],
+								"perl-DateTime" : [],
+								"perl-Sys-Syslog" : [],
+								"perl-LWP-Protocol-https" : [],
+								"perl-Digest-SHA" : []
 							}
 						},
 						"files" : {
@@ -991,16 +996,14 @@
 								"group": "centos"
 							},
 							"/home/centos/scripts/service-check.sh" : {
-								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/shellscripts/service-check.sh",
-								"mode" : "000755",
-								"authentication" : "S3AccessCreds"
+								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/raw/master/shellscripts/service-check.sh",
+								"mode" : "000755"
 							},
 							"/home/centos/.bash_profile" : {
-								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/configfiles/.bash_profile",
+								"source" : "https://github.com/NickGraham101/lamd-stack-cloudformation-template/raw/master/configfiles/.bash_profile",
 								"mode" : "000644",
 								"owner": "centos",
-								"group": "centos",
-								"authentication" : "S3AccessCreds"
+								"group": "centos"
 							}
 						},
 						"commands" : {
@@ -1036,13 +1039,14 @@
 									"Fn::Join" : [
 										"\n",
 										[
-											"sudo yum install perl-Switch perl-DateTime perl-Sys-Syslog perl-LWP-Protocol-https perl-Digest-SHA --enablerepo=\"rhui-REGION-rhel-server-optional\" -y",
+											"cd /home/centos/",
 											"curl http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip -O",
 											"unzip CloudWatchMonitoringScripts-1.2.1.zip",
 											"rm CloudWatchMonitoringScripts-1.2.1.zip",
 											"cd aws-scripts-mon",
 											"cp awscreds.template awscreds.conf",
-											"chmod 600 awscreds.conf"
+											"chmod 640 awscreds.conf",
+											"chgrp -R centos /home/centos/aws-scripts-mon"
 										]
 									]
 								}
@@ -1052,18 +1056,18 @@
 									"Fn::Join" : [
 										"",
 										[
-											"sudo sed -i '/^AWSAccessKeyId=s/",
+											"sudo sed -i '/^AWSAccessKeyId=/s/$/",
 											{ "Ref" : "InstanceUserAccessKey" },
-											"/' ~/aws-scripts-mon/awscreds.conf\n",
-											"sudo sed -i '/^AWSSecretKey=s/",
+											"/' /home/centos/aws-scripts-mon/awscreds.conf\n",
+											"sudo replace AWSSecretKey= AWSSecretKey=",
 											{ 
 												"Fn::GetAtt" : [
 													"InstanceUserAccessKey",
 													"SecretAccessKey"
 												]
 											},
-											"/' ~/aws-scripts-mon/awscreds.conf\n",
-											"echo \"*/5 * * * * ~/aws-scripts-mon/mon-put-instance-data.pl --mem-util --mem-used-incl-cache-buff --mem-used --mem-avail --disk-space-util --disk-path=/ --from-cron\" | sudo tee -a /etc/crontab"
+											" -- /home/centos/aws-scripts-mon/awscreds.conf\n",
+											"echo \"*/5 * * * * centos ~/aws-scripts-mon/mon-put-instance-data.pl --mem-util --mem-used-incl-cache-buff --mem-used --mem-avail --disk-space-util --disk-path=/ --from-cron\" | sudo tee -a /etc/crontab"
 										]
 									]
 								}
@@ -1186,7 +1190,41 @@
 				}]
 			}
 		},
-		"ServiceAlarms" : {
+		"DbServiceAlarm" : {
+			"Type" : "AWS::CloudWatch::Alarm",
+			"Properties" : {
+				"ActionsEnabled" : "True",
+				"AlarmActions" : [ { "Ref" : "CloudWatchNotification" } ],
+				"AlarmDescription" : {
+					"Fn::Join" : [
+						"",
+						[
+							"Monitors running status of mariadb on ",
+							{ "Ref" : "AWS::StackName" }
+						]
+					]
+				  },
+				"AlarmName" : {
+					"Fn::Join" : [
+						"",
+						[
+							
+							"Mariadb-Service-Alarm"
+						]
+					]
+				},
+				"ComparisonOperator" : "LessThanThreshold",
+				"EvaluationPeriods" : 1,
+				"InsufficientDataActions" : [ { "Ref" : "CloudWatchNotification" } ],
+				"MetricName" : "mariadb",
+				"Namespace" : "WebAppServices",
+				"Period" : 300,
+				"Statistic" : "Average",
+				"Threshold" : "1",
+				"TreatMissingData" : "breaching"				
+			}
+		},
+		"ApacheServiceAlarm" : {
 			"Type" : "AWS::CloudWatch::Alarm",
 			"Properties" : {
 			  "ActionsEnabled" : "True",
@@ -1195,16 +1233,58 @@
 				"Fn::Join" : [
 					"",
 					[
-						"Monitors running status of mariadb on ",
+						"Monitors running status of httpd on ",
 						{ "Ref" : "AWS::StackName" }
 					]
 				]
 			  },
-			  "AlarmName" : "Mariadb-Service-Alarm",
+			  "AlarmName" : {
+				"Fn::Join" : [
+					"",
+					[
+						{ "Ref" : "AWS::StackName" },
+						"-Apache-Service-Alarm"
+					]
+				]
+			  },
 			  "ComparisonOperator" : "LessThanThreshold",
 			  "EvaluationPeriods" : 1,
 			  "InsufficientDataActions" : [ { "Ref" : "CloudWatchNotification" } ],
-			  "MetricName" : "mariadb",
+			  "MetricName" : "httpd",
+			  "Namespace" : "GandTServices",
+			  "Period" : 300,
+			  "Statistic" : "Average",
+			  "Threshold" : "1",
+			  "TreatMissingData" : "breaching"				
+			}
+		},
+		"KestrelServiceAlarm" : {
+			"Type" : "AWS::CloudWatch::Alarm",
+			"Properties" : {
+			  "ActionsEnabled" : "True",
+			  "AlarmActions" : [ { "Ref" : "CloudWatchNotification" } ],
+			  "AlarmDescription" : {
+				"Fn::Join" : [
+					"",
+					[
+						"monitors heartbeat of kestrel-gandt.service on ",
+						{ "Ref" : "AWS::StackName" }
+					]
+				]
+			  },
+			  "AlarmName" : {
+				"Fn::Join" : [
+					"",
+					[
+						{ "Ref" : "AWS::StackName" },
+						"-Kestrel-GandT-Service-Alarm"
+					]
+				]
+			  },
+			  "ComparisonOperator" : "LessThanThreshold",
+			  "EvaluationPeriods" : 1,
+			  "InsufficientDataActions" : [ { "Ref" : "CloudWatchNotification" } ],
+			  "MetricName" : "kestrel-gandt",
 			  "Namespace" : "GandTServices",
 			  "Period" : 300,
 			  "Statistic" : "Average",
